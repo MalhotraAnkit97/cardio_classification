@@ -1,3 +1,5 @@
+<img width="878" alt="image" src="https://github.com/user-attachments/assets/2ed44603-5a55-485f-9312-745e7eb8bee4" />
+
 # **Cardiovascular Disease Classification Project**
 
 ## **Project Overview**
