@@ -1,0 +1,306 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+
+```{r}
+library(tidyverse)
+cardio_all_data <- read.csv("cardio_train.csv", sep = ";")
+glimpse(cardio_all_data)
+summary(cardio_all_data)
+```
+
+```{r}
+# Transform age to year
+cardio_all_data$age_years <- round(cardio_all_data$age / 365)
+# Create BMI variable from height and weight
+cardio_all_data$heightInMeter <- cardio_all_data$height/100
+cardio_all_data$BMI <- cardio_all_data$weight/(cardio_all_data$heightInMeter^2)
+head(cardio_all_data)
+```
+```{r}
+# data cleaning
+clean_df <- is.na(cardio_all_data)
+# no missing values
+clean_df <- cardio_all_data %>% select(-id, -age, -height)
+
+# need to change gender value from 1 to 0
+clean_df$gender <- ifelse(clean_df$gender == 1, 0, ifelse(clean_df$gender == 2, 1, clean_df$gender))
+```
+
+Plotting
+```{r}
+library(reshape2)
+numeric_vars <- melt(clean_df, measure.vars = c("age_years", "BMI", "ap_hi", "ap_lo"))
+# Now plot using ggplot2
+
+ggplot(numeric_vars, aes(x = variable, y = value)) +
+geom_boxplot(mapping = aes(fill = variable, color = variable)) +
+theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  #Rotate the x axis labels 
+  labs(x = "Variables", y = "Values", title = "Boxplots of Numerical Variables")
+```
+```{r}
+numeric_data <- clean_df[c("BMI", "ap_hi", "ap_lo")]
+# Calculate Q1 and Q3 for each column
+Q1 <- apply(numeric_data, 2, quantile, probs = 0.25)
+Q3 <- apply(numeric_data, 2, quantile, probs = 0.75)
+# Calculate the IQR for each column
+IQR <- Q3 - Q1
+# Create a logical matrix where TRUE corresponds to an outlier
+outliers <- sweep(numeric_data, 2, Q1, "-") < (-1.5 * IQR) | sweep(numeric_data, 2, Q3, "-") > (1.5*IQR) # Determine the rows that have any outliers
+outlier_rows <- apply(outliers, 1, any)
+# Remove the outlier rows from the original dataset
+cardio_clean <- clean_df[!outlier_rows, ]
+# Check the first few rows of the outlier-free dataframe
+head(cardio_clean)
+```
+
+```{r}
+library(gridExtra)
+ggplot(data = cardio_clean, mapping = aes(x = age_years, y = weight)) +
+  geom_point() + 
+  geom_smooth(method = "lm")
+# discard
+
+plot1 <- ggplot(data = cardio_clean, mapping = aes(x = age_years)) + 
+  geom_histogram(color = "Navy Blue")
+  
+
+plot2 <- ggplot(data = cardio_clean, mapping = aes(x = heightInMeter)) + 
+  geom_histogram() 
+
+plot3 <- ggplot(data = cardio_clean, mapping = aes(x = ap_hi)) + 
+  geom_histogram()
+
+grid.arrange(plot1, plot2, plot3, ncol = 2)
+```
+
+```{r}
+# corr matrix | heatmap
+library(ggplot2)
+library(reshape2)
+
+# Compute the correlation matrix
+correlation_matrix <- cor(cardio_clean)
+
+# Convert the correlation matrix to a long format
+correlation_data <- melt(correlation_matrix)
+
+# Create a heatmap of the correlation matrix
+# ggplot(data = correlation_data, aes(Var1, Var2, fill = value)) +
+#   geom_tile(color = "white") +
+#   scale_fill_gradient(low = "blue", high = "red") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   labs(title = "Correlation Matrix Heatmap") + 
+#     geom_text(aes(label = round(value, 2)), color = "white")  # Add numbers to blocks with rounding
+
+ggplot(data = correlation_data, aes(Var1, Var2, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_distiller(palette = "RdYlBu", direction = 1) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Correlation Matrix Heatmap") +
+  geom_text(aes(label = round(value, 2)), color = "white")
+```
+
+```{r}
+ggplot(cardio_clean, aes(x = ap_hi, y = ap_lo, color = "red")) +
+  geom_point() +
+  facet_grid(~., scales = "free_x") +
+  scale_color_manual(values = c("red", "blue")) +
+  theme_minimal()
+```
+
+
+
+```{r}
+ggplot(data = cardio_clean, mapping = aes(x =ap_lo , y = cholesterol)) +
+  geom_point() +
+  geom_smooth(se = FALSE)
+```
+
+```{r}
+library(caret)
+
+# Split into train and test sets
+set.seed(1997) # Set the seed for reproducibility
+train_index <- createDataPartition(cardio_clean$cardio, p = 0.7, list = FALSE)
+train_data <- cardio_clean[train_index, ]
+test_data <- cardio_clean[-train_index, ]
+```
+
+
+```{r}
+# Load the required libraries
+library(MASS)
+
+# Fit a GLM model to the train data
+glm_model <- glm(cardio ~ ., data = train_data, family = "binomial")
+
+# Make predictions on the test data
+predictions <- predict(glm_model, newdata = test_data, type = "response")
+
+# Convert the predicted probabilities to binary outcomes
+predictions <- ifelse(predictions > 0.5, 1, 0)
+
+# Create a confusion matrix to evaluate the accuracy of the model
+confusion_matrix <- table(Predicted = predictions, Actual = test_data$cardio)
+
+# Print the confusion matrix
+confusion_matrix
+
+# Calculate the accuracy of the model
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+# Print the accuracy
+accuracy
+```
+
+
+
+```{r}
+library(tidyverse)
+library(leaps)
+
+best_subset <- regsubsets(cardio ~ ., data = train_data, nvmax = 10)  
+#nvmax	means: maximum size of subsets to examine
+results <- summary(best_subset)
+results
+
+```
+Final model after model selection.
+
+# tried smoke*alco (feature engineering) but didnt work out
+
+```{r}
+# Load the required libraries
+library(MASS)
+
+# Fit a GLM model to the train data
+glm_model <- glm(cardio ~ poly(ap_hi,2) + age_years + cholesterol + BMI + 
+    active  + gluc + weight + smoke + alco + gender, family = "binomial", 
+    data = train_data)
+
+# Make predictions on the test data
+predictions <- predict(glm_model, newdata = test_data, type = "response")
+
+# Convert the predicted probabilities to binary outcomes
+predictions <- ifelse(predictions > 0.5, 1, 0)
+
+# Create a confusion matrix to evaluate the accuracy of the model
+confusion_matrix <- table(Predicted = predictions, Actual = test_data$cardio)
+
+# Print the confusion matrix
+confusion_matrix
+
+# Calculate the accuracy of the model
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+
+# Print the accuracy
+accuracy
+```
+
+```{r}
+# Load the required library
+library(MASS)
+
+# Fit the full model
+full.model <- glm_model
+
+# Perform backward selection
+backward.model <- step(full.model, direction = "backward")
+summary(backward.model)
+
+# Perform forward selection
+forward.model <- step(glm(cardio ~ 1, data = train_data, family = "binomial"), scope = list(upper = full.model, lower = glm(cardio ~ 1, data = train_data, family = "binomial")), direction = "forward")
+summary(forward.model)
+```
+
+```{r}
+library(rpart)
+
+mod.1<-rpart(cardio~.,data=cardio_clean,method="anova")
+mod.1
+```
+```{r}
+library(rpart.plot)
+
+rpart.plot(mod.1, type = 4, digits=3)
+
+mod.1$variable.importance
+
+```
+```{r}
+reg.tree <- rpart(cardio ~ poly(ap_hi,2) + age_years + cholesterol + BMI + 
+    active  + gluc + weight + smoke + alco + gender, data = cardio_clean)
+rpart.plot(reg.tree, type=4, digits=3, fallen.leaves = T)
+```
+```{r}
+set.seed(1997)
+train <- sample(1:nrow(cardio_clean), nrow(cardio_clean)/2)
+mod.2 <- rpart(cardio ~ ., subset = train, data = cardio_clean)
+summary(mod.2)
+
+rpart.plot(mod.2, type=4, digits = 3)
+
+mod.2$variable.importance
+
+test<-cardio_clean
+test
+
+
+pred.2<-predict(mod.2,test)
+pred.2
+
+
+real.cardio<-cardio_clean$cardio[1:10]
+real.cardio
+
+RMSE.mod.2<-sqrt(mean((pred.2-real.cardio)^2,na.rm=T))
+RMSE.mod.2
+```
+
+KNN starts here
+
+```{r}
+library(caret)
+library(class)
+
+# convert the outcome variable to a 2-level factor
+cardio_clean$cardio <- as.factor(cardio_clean$cardio)
+
+# check the levels of the factor variable
+levels(cardio_clean$cardio)
+
+set.seed(1997)
+train_index <- createDataPartition(cardio_clean$cardio, p = 0.7, list = FALSE)
+train_data_knn <- cardio_clean[train_index, ]
+test_data_knn <- cardio_clean[-train_index, ]
+
+# perform KNN with 5-fold cross-validation and 10 repeats
+set.seed(1997)
+ctrl <- trainControl(method = "repeatedcv", number = 5, repeats = 5)
+knn_model <- train(cardio ~ ., data = train_data_knn, method = "knn", trControl = ctrl, tuneLength = 10)
+
+# print the best K value and accuracy
+cat("Best K value:", knn_model$bestTune$k, "\n")
+cat("Cross-validation accuracy:", knn_model$results$Accuracy[which.max(knn_model$results$Accuracy)], "\n")
+
+# make predictions on the test set
+predictions <- predict(knn_model, newdata = test_data_knn)
+
+# calculate accuracy, precision, and recall
+accuracy <- sum(predictions == test_data_knn$cardio) / nrow(test_data_knn)
+precision <- sum((predictions == test_data_knn$cardio) & (test_data_knn$cardio == 1)) / sum(predictions == 1)
+recall <- sum((predictions == test_data_knn$cardio) & (test_data_knn$cardio == 1)) / sum(test_data$cardio == 1)
+
+cat("Accuracy:", accuracy, "\n")
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+```
+
+
